@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pickleball Player Matcher</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏓 Pickleball Game Matcher</h1>
+            <p>Match players for random pickleball games</p>
+        </header>
+
+        <main>
+            <!-- Players List Section -->
+            <section class="card">
+                <h2>Players</h2>
+                <div class="add-player-container">
+                    <input type="text" id="playerNameInput" placeholder="Enter player name" class="player-input">
+                    <button id="addPlayerBtn" class="btn-add">+</button>
+                </div>
+                <div id="formMessage" class="message"></div>
+                <div id="playersList" class="players-list">
+                    <p class="loading">Loading players...</p>
+                </div>
+            </section>
+
+            <!-- Match Creation Section -->
+            <section class="card">
+                <h2>Matches</h2>
+                <div class="courts-input-container">
+                    <label for="courtsInput">Number of Courts:</label>
+                    <div class="courts-stepper">
+                        <button id="decreaseCourts" class="stepper-btn" aria-label="Decrease courts">−</button>
+                        <span id="courtsValue" class="courts-value">1</span>
+                        <button id="increaseCourts" class="stepper-btn" aria-label="Increase courts">+</button>
+                    </div>
+                    <input type="hidden" id="courtsInput" value="1">
+                </div>
+                <div class="match-controls">
+                    <button id="createMatches" class="btn btn-primary">Create Matches</button>
+                </div>
+                <div id="matchMessage" class="message"></div>
+                <div id="matchesList" class="matches-list">
+                    <p class="loading">Loading matches...</p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
