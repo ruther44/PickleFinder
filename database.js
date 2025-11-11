@@ -32,21 +32,71 @@ function initializeTables() {
       } else if (columns && columns.some(col => col.name === 'email')) {
         // Table exists with email column, migrate it
         migrateTables();
-      } else {
-        // Table exists, check if it needs availability column
-        const hasAvailable = columns && columns.some(col => col.name === 'available');
-        if (!hasAvailable) {
-          // Add availability column to existing table
-          db.run('ALTER TABLE players ADD COLUMN available INTEGER DEFAULT 1', (err) => {
-            if (err) {
-              console.error('Error adding available column:', err);
-            }
-            createMatchesTable();
-          });
         } else {
-          createMatchesTable();
+          // Table exists, check if it needs availability column
+          const hasAvailable = columns && columns.some(col => col.name === 'available');
+          if (!hasAvailable) {
+            // Add availability column to existing table
+            db.run('ALTER TABLE players ADD COLUMN available INTEGER DEFAULT 1', (err) => {
+              if (err) {
+                console.error('Error adding available column:', err);
+              }
+              checkMatchesTable();
+            });
+          } else {
+            checkMatchesTable();
+          }
         }
-      }
+        
+        function checkMatchesTable() {
+          db.all("PRAGMA table_info(matches)", (err, columns) => {
+            if (err) {
+              createMatchesTable();
+            } else {
+              const hasMatchGroup = columns && columns.some(col => col.name === 'match_group');
+              const hasNumCourts = columns && columns.some(col => col.name === 'num_courts');
+              
+              let pendingAlters = 0;
+              let completedAlters = 0;
+              
+              if (!hasMatchGroup) pendingAlters++;
+              if (!hasNumCourts) pendingAlters++;
+              
+              const checkComplete = () => {
+                completedAlters++;
+                if (completedAlters >= pendingAlters) {
+                  createMatchesTable();
+                }
+              };
+              
+              if (pendingAlters === 0) {
+                createMatchesTable();
+              } else {
+                if (!hasMatchGroup) {
+                  db.run('ALTER TABLE matches ADD COLUMN match_group INTEGER', (err) => {
+                    if (err) {
+                      console.error('Error adding match_group column:', err);
+                    }
+                    checkComplete();
+                  });
+                } else {
+                  checkComplete();
+                }
+                
+                if (!hasNumCourts) {
+                  db.run('ALTER TABLE matches ADD COLUMN num_courts INTEGER', (err) => {
+                    if (err) {
+                      console.error('Error adding num_courts column:', err);
+                    }
+                    checkComplete();
+                  });
+                } else {
+                  checkComplete();
+                }
+              }
+            }
+          });
+        }
     });
 
     function createTables() {
@@ -63,6 +113,8 @@ function initializeTables() {
           player2_id INTEGER REFERENCES players(id),
           player3_id INTEGER REFERENCES players(id),
           player4_id INTEGER REFERENCES players(id),
+          match_group INTEGER,
+          num_courts INTEGER,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`
       ];
@@ -109,6 +161,8 @@ function initializeTables() {
         player2_id INTEGER REFERENCES players(id),
         player3_id INTEGER REFERENCES players(id),
         player4_id INTEGER REFERENCES players(id),
+        match_group INTEGER,
+        num_courts INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`, (err) => {
         if (err) {
@@ -178,9 +232,42 @@ function togglePlayerAvailability(playerId, available) {
   });
 }
 
+// Get the next match group number for a specific court count
+function getNextMatchGroup(numCourts) {
+  return new Promise((resolve, reject) => {
+    // First check if match_group column exists
+    db.all("PRAGMA table_info(matches)", (err, columns) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      const hasMatchGroup = columns && columns.some(col => col.name === 'match_group');
+      const hasNumCourts = columns && columns.some(col => col.name === 'num_courts');
+      
+      if (!hasMatchGroup || !hasNumCourts) {
+        // If columns don't exist, return 1 as the first group
+        resolve(1);
+        return;
+      }
+      
+      // Handle NULL num_courts for existing matches by using COALESCE
+      db.get('SELECT MAX(match_group) as max_group FROM matches WHERE COALESCE(num_courts, 0) = ?', [numCourts], (err, row) => {
+        if (err) {
+          console.error('Error in getNextMatchGroup query:', err);
+          reject(err);
+        } else {
+          const nextGroup = (row && row.max_group ? row.max_group : 0) + 1;
+          resolve(nextGroup);
+        }
+      });
+    });
+  });
+}
+
 // Create a match with random players
 // playerIds should be array of 4 players: [serving1, serving2, receiving1, receiving2]
-function createMatch(playerIds) {
+function createMatch(playerIds, matchGroup, numCourts) {
   return new Promise((resolve, reject) => {
     // Ensure we have exactly 4 players
     if (playerIds.length !== 4) {
@@ -191,8 +278,8 @@ function createMatch(playerIds) {
     // player1_id and player2_id = serving team
     // player3_id and player4_id = receiving team
     const stmt = db.prepare(`
-      INSERT INTO matches (player1_id, player2_id, player3_id, player4_id) 
-      VALUES (?, ?, ?, ?)
+      INSERT INTO matches (player1_id, player2_id, player3_id, player4_id, match_group, num_courts) 
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
     
     stmt.run(
@@ -200,6 +287,8 @@ function createMatch(playerIds) {
       playerIds[1], // serving team player 2
       playerIds[2], // receiving team player 1
       playerIds[3], // receiving team player 2
+      matchGroup,
+      numCourts,
       function(err) {
         if (err) {
           reject(err);
@@ -222,6 +311,8 @@ function getAllMatches() {
       SELECT 
         m.id,
         m.created_at,
+        m.match_group,
+        m.num_courts,
         p1.id as player1_id, p1.name as player1_name,
         p2.id as player2_id, p2.name as player2_name,
         p3.id as player3_id, p3.name as player3_name,
@@ -231,7 +322,7 @@ function getAllMatches() {
       LEFT JOIN players p2 ON m.player2_id = p2.id
       LEFT JOIN players p3 ON m.player3_id = p3.id
       LEFT JOIN players p4 ON m.player4_id = p4.id
-      ORDER BY m.created_at DESC
+      ORDER BY m.match_group DESC, m.created_at DESC
     `, (err, rows) => {
       if (err) reject(err);
       else resolve(rows);
@@ -246,6 +337,7 @@ module.exports = {
   getAllPlayers,
   getAvailablePlayers,
   togglePlayerAvailability,
+  getNextMatchGroup,
   createMatch,
   getAllMatches
 };

@@ -32,6 +32,10 @@ async function loadPlayers() {
     const players = await response.json();
     const playersList = document.getElementById('playersList');
     
+    // Count active players
+    const activeCount = players.filter(p => p.available === 1 || p.available === true).length;
+    document.getElementById('activeCount').textContent = activeCount;
+    
     if (players.length === 0) {
       playersList.innerHTML = '<p class="empty">No players registered yet.</p>';
       return;
@@ -65,10 +69,17 @@ async function loadPlayers() {
 // Load and display matches
 async function loadMatches() {
   try {
-    const response = await fetch(`${API_BASE}/matches`);
-    if (!response.ok) throw new Error('Failed to fetch matches');
+    // Get both matches and players
+    const [matchesResponse, playersResponse] = await Promise.all([
+      fetch(`${API_BASE}/matches`),
+      fetch(`${API_BASE}/players`)
+    ]);
     
-    const matches = await response.json();
+    if (!matchesResponse.ok) throw new Error('Failed to fetch matches');
+    if (!playersResponse.ok) throw new Error('Failed to fetch players');
+    
+    const matches = await matchesResponse.json();
+    const allPlayers = await playersResponse.json();
     const matchesList = document.getElementById('matchesList');
     
     if (matches.length === 0) {
@@ -76,35 +87,101 @@ async function loadMatches() {
       return;
     }
     
-    matchesList.innerHTML = matches.map(match => {
-      const servingTeam = [];
-      const receivingTeam = [];
+    // Get available players
+    const availablePlayers = allPlayers.filter(p => p.available === 1 || p.available === true);
+    const availablePlayerIds = new Set(availablePlayers.map(p => p.id));
+    const availablePlayerMap = new Map(availablePlayers.map(p => [p.id, p]));
+    
+    // Group matches by num_courts and match_group
+    const groupedMatches = {};
+    matches.forEach(match => {
+      const numCourts = match.num_courts || 1;
+      const group = match.match_group || 0;
+      const key = `${numCourts}-${group}`;
+      if (!groupedMatches[key]) {
+        groupedMatches[key] = {
+          numCourts: numCourts,
+          group: group,
+          matches: []
+        };
+      }
+      groupedMatches[key].matches.push(match);
+    });
+    
+    // Sort groups by most recent timestamp (descending - newest first)
+    const sortedGroups = Object.values(groupedMatches).sort((a, b) => {
+      const dateA = new Date(a.matches[0].created_at);
+      const dateB = new Date(b.matches[0].created_at);
+      return dateB - dateA; // Most recent first
+    });
+    
+    matchesList.innerHTML = sortedGroups.map(groupData => {
+      const groupMatches = groupData.matches;
+      const matchDate = new Date(groupMatches[0].created_at).toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
       
-      if (match.player1_name) servingTeam.push(match.player1_name);
-      if (match.player2_name) servingTeam.push(match.player2_name);
-      if (match.player3_name) receivingTeam.push(match.player3_name);
-      if (match.player4_name) receivingTeam.push(match.player4_name);
+      // Get all player IDs playing in this match group
+      const playingPlayerIds = new Set();
+      groupMatches.forEach(match => {
+        if (match.player1_id) playingPlayerIds.add(match.player1_id);
+        if (match.player2_id) playingPlayerIds.add(match.player2_id);
+        if (match.player3_id) playingPlayerIds.add(match.player3_id);
+        if (match.player4_id) playingPlayerIds.add(match.player4_id);
+      });
       
-      const matchDate = new Date(match.created_at).toLocaleString();
+      // Find players who are available but not playing (sitting out)
+      const sittingOut = availablePlayers.filter(p => !playingPlayerIds.has(p.id));
       
       return `
-        <div class="match-item">
-          <div class="match-header">
-            <span class="match-date">${matchDate}</span>
+        <div class="match-group">
+          <div class="match-group-header">
+            <span class="match-group-number">Match #${groupData.group}</span>
+            <span class="match-group-date">${matchDate}</span>
           </div>
-          <div class="match-teams">
-            <div class="team serving-team">
-              <span class="team-label">Serving</span>
-              <div class="team-players">
-                ${servingTeam.map(p => `<span class="player-badge serving">${escapeHtml(p)}</span>`).join('')}
+          ${sittingOut.length > 0 ? `
+            <div class="sitting-out">
+              <span class="sitting-out-label">Sitting Out:</span>
+              <div class="sitting-out-players">
+                ${sittingOut.map(p => `<span class="player-badge sitting-out">${escapeHtml(p.name)}</span>`).join('')}
               </div>
             </div>
-            <div class="team receiving-team">
-              <span class="team-label">Receiving</span>
-              <div class="team-players">
-                ${receivingTeam.map(p => `<span class="player-badge receiving">${escapeHtml(p)}</span>`).join('')}
-              </div>
-            </div>
+          ` : ''}
+          <div class="match-group-matches">
+            ${groupData.matches.map(match => {
+              const servingTeam = [];
+              const receivingTeam = [];
+              
+              if (match.player1_name) servingTeam.push(match.player1_name);
+              if (match.player2_name) servingTeam.push(match.player2_name);
+              if (match.player3_name) receivingTeam.push(match.player3_name);
+              if (match.player4_name) receivingTeam.push(match.player4_name);
+              
+              return `
+                <div class="match-item">
+                  <div class="match-teams">
+                    <div class="team serving-team">
+                      <span class="team-label">Serving</span>
+                      <div class="team-players">
+                        ${servingTeam.map(p => `<span class="player-badge serving">${escapeHtml(p)}</span>`).join('')}
+                      </div>
+                    </div>
+                    <div class="team receiving-team">
+                      <span class="team-label">Receiving</span>
+                      <div class="team-players">
+                        ${receivingTeam.map(p => `<span class="player-badge receiving">${escapeHtml(p)}</span>`).join('')}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
           </div>
         </div>
       `;
@@ -115,6 +192,9 @@ async function loadMatches() {
       '<p class="error">Failed to load matches. Please refresh the page.</p>';
   }
 }
+
+// Track last courts value to detect changes
+let lastCourtsValue = 1;
 
 // Create matches for all courts (always 4 players per match)
 async function createMatches() {
@@ -129,6 +209,15 @@ async function createMatches() {
       showMessage('matchMessage', 'Number of courts must be at least 1', true);
       return;
     }
+    
+    // Get next match group number for this court count (automatically resets per court count)
+    const groupResponse = await fetch(`${API_BASE}/matches/next-group?numCourts=${numCourts}`);
+    if (!groupResponse.ok) {
+      const errorData = await groupResponse.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || 'Failed to get match group number');
+    }
+    const groupData = await groupResponse.json();
+    const matchGroup = groupData.nextGroup;
     
     // First, get all players
     const response = await fetch(`${API_BASE}/players`);
@@ -178,7 +267,7 @@ async function createMatches() {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ playerIds })
+        body: JSON.stringify({ playerIds, matchGroup, numCourts })
       });
       
       if (!matchResponse.ok) {
@@ -201,7 +290,7 @@ async function createMatches() {
     ).join(' | ');
     
     showMessage('matchMessage', 
-      `Created ${numCourts} ${matchText} successfully! ${playerNamesList}`, 
+      `Created Match #${matchGroup} with ${numCourts} ${matchText}! ${playerNamesList}`, 
       false);
     
     // Reload matches
@@ -305,6 +394,21 @@ document.addEventListener('DOMContentLoaded', () => {
   loadPlayers();
   loadMatches();
   
+  // Setup accordion for Players section
+  const playersAccordionHeader = document.getElementById('playersAccordionHeader');
+  const playersAccordionContent = document.getElementById('playersAccordionContent');
+  
+  playersAccordionHeader.addEventListener('click', () => {
+    const isCollapsed = playersAccordionHeader.classList.contains('collapsed');
+    if (isCollapsed) {
+      playersAccordionHeader.classList.remove('collapsed');
+      playersAccordionContent.classList.remove('collapsed');
+    } else {
+      playersAccordionHeader.classList.add('collapsed');
+      playersAccordionContent.classList.add('collapsed');
+    }
+  });
+  
   // Setup courts stepper
   const decreaseBtn = document.getElementById('decreaseCourts');
   const increaseBtn = document.getElementById('increaseCourts');
@@ -316,6 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (numValue >= 1 && numValue <= 10) {
       courtsValue.textContent = numValue;
       courtsInput.value = numValue;
+      lastCourtsValue = numValue;
     }
   };
   

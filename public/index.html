@@ -16,14 +16,24 @@
         <main>
             <!-- Players List Section -->
             <section class="card">
-                <h2>Players</h2>
-                <div class="add-player-container">
-                    <input type="text" id="playerNameInput" placeholder="Enter player name" class="player-input">
-                    <button id="addPlayerBtn" class="btn-add">+</button>
+                <div class="players-header accordion-header" id="playersAccordionHeader">
+                    <h2>Players</h2>
+                    <div class="header-right">
+                        <div class="active-count">
+                            <span id="activeCount">0</span> active
+                        </div>
+                        <span class="accordion-arrow">▼</span>
+                    </div>
                 </div>
-                <div id="formMessage" class="message"></div>
-                <div id="playersList" class="players-list">
-                    <p class="loading">Loading players...</p>
+                <div class="accordion-content" id="playersAccordionContent">
+                    <div class="add-player-container">
+                        <input type="text" id="playerNameInput" placeholder="Enter player name" class="player-input">
+                        <button id="addPlayerBtn" class="btn-add">+</button>
+                    </div>
+                    <div id="formMessage" class="message"></div>
+                    <div id="playersList" class="players-list">
+                        <p class="loading">Loading players...</p>
+                    </div>
                 </div>
             </section>
 

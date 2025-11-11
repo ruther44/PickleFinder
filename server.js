@@ -71,7 +71,7 @@ app.patch('/api/players/:id/availability', async (req, res) => {
 // Create a random match
 app.post('/api/matches', async (req, res) => {
   try {
-    const { playerIds } = req.body;
+    const { playerIds, matchGroup, numCourts } = req.body;
 
     if (!playerIds || !Array.isArray(playerIds)) {
       return res.status(400).json({ error: 'playerIds array is required' });
@@ -81,11 +81,31 @@ app.post('/api/matches', async (req, res) => {
       return res.status(400).json({ error: 'Match must have exactly 4 players' });
     }
 
-    const match = await db.createMatch(playerIds);
+    if (matchGroup === undefined || matchGroup === null) {
+      return res.status(400).json({ error: 'matchGroup is required' });
+    }
+
+    if (numCourts === undefined || numCourts === null) {
+      return res.status(400).json({ error: 'numCourts is required' });
+    }
+
+    const match = await db.createMatch(playerIds, matchGroup, numCourts);
     res.status(201).json(match);
   } catch (error) {
     console.error('Error creating match:', error);
     res.status(500).json({ error: 'Failed to create match' });
+  }
+});
+
+// Get next match group number for a specific court count
+app.get('/api/matches/next-group', async (req, res) => {
+  try {
+    const numCourts = parseInt(req.query.numCourts) || 1;
+    const nextGroup = await db.getNextMatchGroup(numCourts);
+    res.json({ nextGroup });
+  } catch (error) {
+    console.error('Error getting next match group:', error);
+    res.status(500).json({ error: 'Failed to get next match group' });
   }
 });
 
