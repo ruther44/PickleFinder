@@ -1,313 +1,250 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 
-// Database file path
-const dbPath = path.join(__dirname, 'pickleball.db');
-let db;
+let pool;
 
+// Initialize database connection
 function initializeDatabase() {
   return new Promise((resolve, reject) => {
-    db = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-        reject(err);
-      } else {
-        // Enable foreign keys
-        db.run('PRAGMA foreign_keys = ON', (err) => {
-          if (err) reject(err);
-          else resolve(db);
-        });
-      }
-    });
+    try {
+      // Railway provides DATABASE_URL automatically
+      pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+      });
+      
+      // Test connection
+      pool.query('SELECT NOW()', (err, result) => {
+        if (err) {
+          console.error('Database connection error:', err);
+          reject(err);
+        } else {
+          console.log('Database connected successfully');
+          resolve(pool);
+        }
+      });
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
 // Initialize tables if they don't exist
-function initializeTables() {
-  return new Promise((resolve, reject) => {
-    // Check if players table exists and has email column
-    db.all("PRAGMA table_info(players)", (err, columns) => {
-      if (err) {
-        // Table doesn't exist, create it
-        createTables();
-      } else if (columns && columns.some(col => col.name === 'email')) {
-        // Table exists with email column, migrate it
-        migrateTables();
-        } else {
-          // Table exists, check if it needs availability column
-          const hasAvailable = columns && columns.some(col => col.name === 'available');
-          if (!hasAvailable) {
-            // Add availability column to existing table
-            db.run('ALTER TABLE players ADD COLUMN available INTEGER DEFAULT 1', (err) => {
-              if (err) {
-                console.error('Error adding available column:', err);
-              }
-              checkMatchesTable();
-            });
-          } else {
-            checkMatchesTable();
-          }
+async function initializeTables() {
+  try {
+    // Check if players table exists
+    const playersCheck = await pool.query(`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'players'
+    `);
+    
+    if (playersCheck.rows.length === 0) {
+      // Table doesn't exist, create all tables
+      await createTables();
+    } else {
+      // Check if old schema (has email column)
+      const hasEmail = playersCheck.rows.some(col => col.column_name === 'email');
+      if (hasEmail) {
+        await migrateTables();
+      } else {
+        // Check if availability column exists
+        const hasAvailable = playersCheck.rows.some(col => col.column_name === 'available');
+        if (!hasAvailable) {
+          await pool.query('ALTER TABLE players ADD COLUMN available INTEGER DEFAULT 1');
         }
-        
-        function checkMatchesTable() {
-          db.all("PRAGMA table_info(matches)", (err, columns) => {
-            if (err) {
-              createMatchesTable();
-            } else {
-              const hasMatchGroup = columns && columns.some(col => col.name === 'match_group');
-              const hasNumCourts = columns && columns.some(col => col.name === 'num_courts');
-              
-              let pendingAlters = 0;
-              let completedAlters = 0;
-              
-              if (!hasMatchGroup) pendingAlters++;
-              if (!hasNumCourts) pendingAlters++;
-              
-              const checkComplete = () => {
-                completedAlters++;
-                if (completedAlters >= pendingAlters) {
-                  createMatchesTable();
-                }
-              };
-              
-              if (pendingAlters === 0) {
-                createMatchesTable();
-              } else {
-                if (!hasMatchGroup) {
-                  db.run('ALTER TABLE matches ADD COLUMN match_group INTEGER', (err) => {
-                    if (err) {
-                      console.error('Error adding match_group column:', err);
-                    }
-                    checkComplete();
-                  });
-                } else {
-                  checkComplete();
-                }
-                
-                if (!hasNumCourts) {
-                  db.run('ALTER TABLE matches ADD COLUMN num_courts INTEGER', (err) => {
-                    if (err) {
-                      console.error('Error adding num_courts column:', err);
-                    }
-                    checkComplete();
-                  });
-                } else {
-                  checkComplete();
-                }
-              }
-            }
-          });
-        }
-    });
-
-    function createTables() {
-      const queries = [
-        `CREATE TABLE IF NOT EXISTS players (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          available INTEGER DEFAULT 1,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`,
-        `CREATE TABLE IF NOT EXISTS matches (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          player1_id INTEGER REFERENCES players(id),
-          player2_id INTEGER REFERENCES players(id),
-          player3_id INTEGER REFERENCES players(id),
-          player4_id INTEGER REFERENCES players(id),
-          match_group INTEGER,
-          num_courts INTEGER,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`
-      ];
-
-      let completed = 0;
-      queries.forEach((query) => {
-        db.run(query, (err) => {
-          if (err) {
-            reject(err);
-          } else {
-            completed++;
-            if (completed === queries.length) {
-              console.log('Database tables initialized successfully');
-              resolve();
-            }
-          }
-        });
-      });
+        await checkMatchesTable();
+      }
     }
+  } catch (err) {
+    console.error('Error initializing tables:', err);
+    throw err;
+  }
+}
 
-    function migrateTables() {
-      // Drop and recreate players table without email
-      db.serialize(() => {
-        db.run('DROP TABLE IF EXISTS matches', (err) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          db.run('DROP TABLE IF EXISTS players', (err) => {
-            if (err) {
-              reject(err);
-              return;
-            }
-            createTables();
-          });
-        });
-      });
+async function checkMatchesTable() {
+  try {
+    const matchesCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'matches'
+    `);
+    
+    if (matchesCheck.rows.length === 0) {
+      await createMatchesTable();
+    } else {
+      const columns = matchesCheck.rows.map(row => row.column_name);
+      const hasMatchGroup = columns.includes('match_group');
+      const hasNumCourts = columns.includes('num_courts');
+      
+      if (!hasMatchGroup) {
+        await pool.query('ALTER TABLE matches ADD COLUMN match_group INTEGER');
+      }
+      if (!hasNumCourts) {
+        await pool.query('ALTER TABLE matches ADD COLUMN num_courts INTEGER');
+      }
+      console.log('Database tables initialized successfully');
     }
+  } catch (err) {
+    console.error('Error checking matches table:', err);
+    throw err;
+  }
+}
 
-    function createMatchesTable() {
-      db.run(`CREATE TABLE IF NOT EXISTS matches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+async function createTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS players (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        available INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS matches (
+        id SERIAL PRIMARY KEY,
         player1_id INTEGER REFERENCES players(id),
         player2_id INTEGER REFERENCES players(id),
         player3_id INTEGER REFERENCES players(id),
         player4_id INTEGER REFERENCES players(id),
         match_group INTEGER,
         num_courts INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`, (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          console.log('Database tables initialized successfully');
-          resolve();
-        }
-      });
-    }
-  });
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    console.log('Database tables initialized successfully');
+  } catch (err) {
+    console.error('Error creating tables:', err);
+    throw err;
+  }
+}
+
+async function migrateTables() {
+  try {
+    await pool.query('DROP TABLE IF EXISTS matches CASCADE');
+    await pool.query('DROP TABLE IF EXISTS players CASCADE');
+    await createTables();
+  } catch (err) {
+    console.error('Error migrating tables:', err);
+    throw err;
+  }
+}
+
+async function createMatchesTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS matches (
+        id SERIAL PRIMARY KEY,
+        player1_id INTEGER REFERENCES players(id),
+        player2_id INTEGER REFERENCES players(id),
+        player3_id INTEGER REFERENCES players(id),
+        player4_id INTEGER REFERENCES players(id),
+        match_group INTEGER,
+        num_courts INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('Database tables initialized successfully');
+  } catch (err) {
+    console.error('Error creating matches table:', err);
+    throw err;
+  }
 }
 
 // Add a new player
-function addPlayer(name) {
-  return new Promise((resolve, reject) => {
-    const stmt = db.prepare('INSERT INTO players (name, available) VALUES (?, 1)');
-    stmt.run(name, function(err) {
-      if (err) {
-        reject(err);
-      } else {
-        db.get('SELECT * FROM players WHERE id = ?', [this.lastID], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      }
-    });
-    stmt.finalize();
-  });
+async function addPlayer(name) {
+  try {
+    const result = await pool.query(
+      'INSERT INTO players (name, available) VALUES ($1, 1) RETURNING *',
+      [name]
+    );
+    return result.rows[0];
+  } catch (err) {
+    console.error('Error adding player:', err);
+    throw err;
+  }
 }
 
 // Get all players
-function getAllPlayers() {
-  return new Promise((resolve, reject) => {
-    db.all('SELECT * FROM players ORDER BY available DESC, created_at DESC', (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+async function getAllPlayers() {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM players ORDER BY available DESC, created_at DESC'
+    );
+    return result.rows;
+  } catch (err) {
+    console.error('Error fetching players:', err);
+    throw err;
+  }
 }
 
 // Get available players only
-function getAvailablePlayers() {
-  return new Promise((resolve, reject) => {
-    db.all('SELECT * FROM players WHERE available = 1 ORDER BY created_at DESC', (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+async function getAvailablePlayers() {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM players WHERE available = 1 ORDER BY created_at DESC'
+    );
+    return result.rows;
+  } catch (err) {
+    console.error('Error fetching available players:', err);
+    throw err;
+  }
 }
 
 // Toggle player availability
-function togglePlayerAvailability(playerId, available) {
-  return new Promise((resolve, reject) => {
-    const stmt = db.prepare('UPDATE players SET available = ? WHERE id = ?');
-    stmt.run(available ? 1 : 0, playerId, function(err) {
-      if (err) {
-        reject(err);
-      } else {
-        db.get('SELECT * FROM players WHERE id = ?', [playerId], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      }
-    });
-    stmt.finalize();
-  });
+async function togglePlayerAvailability(playerId, available) {
+  try {
+    const result = await pool.query(
+      'UPDATE players SET available = $1 WHERE id = $2 RETURNING *',
+      [available ? 1 : 0, playerId]
+    );
+    return result.rows[0];
+  } catch (err) {
+    console.error('Error updating player availability:', err);
+    throw err;
+  }
 }
 
 // Get the next match group number for a specific court count
-function getNextMatchGroup(numCourts) {
-  return new Promise((resolve, reject) => {
-    // First check if match_group column exists
-    db.all("PRAGMA table_info(matches)", (err, columns) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      
-      const hasMatchGroup = columns && columns.some(col => col.name === 'match_group');
-      const hasNumCourts = columns && columns.some(col => col.name === 'num_courts');
-      
-      if (!hasMatchGroup || !hasNumCourts) {
-        // If columns don't exist, return 1 as the first group
-        resolve(1);
-        return;
-      }
-      
-      // Handle NULL num_courts for existing matches by using COALESCE
-      db.get('SELECT MAX(match_group) as max_group FROM matches WHERE COALESCE(num_courts, 0) = ?', [numCourts], (err, row) => {
-        if (err) {
-          console.error('Error in getNextMatchGroup query:', err);
-          reject(err);
-        } else {
-          const nextGroup = (row && row.max_group ? row.max_group : 0) + 1;
-          resolve(nextGroup);
-        }
-      });
-    });
-  });
+async function getNextMatchGroup(numCourts) {
+  try {
+    const result = await pool.query(
+      'SELECT MAX(match_group) as max_group FROM matches WHERE COALESCE(num_courts, 0) = $1',
+      [numCourts]
+    );
+    const nextGroup = (result.rows[0] && result.rows[0].max_group ? result.rows[0].max_group : 0) + 1;
+    return nextGroup;
+  } catch (err) {
+    console.error('Error getting next match group:', err);
+    throw err;
+  }
 }
 
 // Create a match with random players
-// playerIds should be array of 4 players: [serving1, serving2, receiving1, receiving2]
-function createMatch(playerIds, matchGroup, numCourts) {
-  return new Promise((resolve, reject) => {
-    // Ensure we have exactly 4 players
+async function createMatch(playerIds, matchGroup, numCourts) {
+  try {
     if (playerIds.length !== 4) {
-      reject(new Error('Match must have exactly 4 players'));
-      return;
+      throw new Error('Match must have exactly 4 players');
     }
 
-    // player1_id and player2_id = serving team
-    // player3_id and player4_id = receiving team
-    const stmt = db.prepare(`
-      INSERT INTO matches (player1_id, player2_id, player3_id, player4_id, match_group, num_courts) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(
-      playerIds[0], // serving team player 1
-      playerIds[1], // serving team player 2
-      playerIds[2], // receiving team player 1
-      playerIds[3], // receiving team player 2
-      matchGroup,
-      numCourts,
-      function(err) {
-        if (err) {
-          reject(err);
-        } else {
-          db.get('SELECT * FROM matches WHERE id = ?', [this.lastID], (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
-          });
-        }
-      }
+    const result = await pool.query(
+      `INSERT INTO matches (player1_id, player2_id, player3_id, player4_id, match_group, num_courts) 
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [playerIds[0], playerIds[1], playerIds[2], playerIds[3], matchGroup, numCourts]
     );
-    stmt.finalize();
-  });
+    return result.rows[0];
+  } catch (err) {
+    console.error('Error creating match:', err);
+    throw err;
+  }
 }
 
 // Get all matches with player details
-function getAllMatches() {
-  return new Promise((resolve, reject) => {
-    db.all(`
+async function getAllMatches() {
+  try {
+    const result = await pool.query(`
       SELECT 
         m.id,
         m.created_at,
@@ -323,11 +260,12 @@ function getAllMatches() {
       LEFT JOIN players p3 ON m.player3_id = p3.id
       LEFT JOIN players p4 ON m.player4_id = p4.id
       ORDER BY m.match_group DESC, m.created_at DESC
-    `, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+    `);
+    return result.rows;
+  } catch (err) {
+    console.error('Error fetching matches:', err);
+    throw err;
+  }
 }
 
 module.exports = {
