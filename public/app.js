@@ -1,6 +1,11 @@
 // API base URL
 const API_BASE = '/api';
 
+// Default substitute message template
+const DEFAULT_SUB_TEMPLATE = 'Hi {name}, can you sub on {day} at {time}?';
+const SESSION_DAY_KEY = 'sessionDay';
+const SESSION_TIME_KEY = 'sessionTime';
+
 // Utility function to shuffle array (Fisher-Yates algorithm)
 function shuffleArray(array) {
   const shuffled = [...array];
@@ -41,24 +46,39 @@ async function loadPlayers() {
       return;
     }
     
-    playersList.innerHTML = players.map(player => `
-      <div class="player-item ${!player.available ? 'unavailable' : ''}">
-        <div class="player-info">
-          <strong>${escapeHtml(player.name)}</strong>
+    playersList.innerHTML = players.map(player => {
+      const phoneIndicator = player.phone ? `<span class="phone-indicator" title="Phone saved for texting" aria-hidden="true">📞</span>` : '';
+      const phoneData = player.phone ? ` data-player-phone="${encodeURIComponent(player.phone)}"` : '';
+
+      return `
+        <div class="player-item ${!player.available ? 'unavailable' : ''}" data-player-id="${player.id}">
+          <div class="player-info">
+            <div class="player-name-row">
+              <strong>${escapeHtml(player.name)}</strong>
+              ${phoneIndicator}
+            </div>
+          </div>
+          <div class="player-actions">
+            <button class="text-btn" data-player-id="${player.id}" data-player-name="${escapeHtml(player.name)}"${phoneData} aria-label="Text ${escapeHtml(player.name)}">Text</button>
+            <label class="availability-checkbox">
+              <input type="checkbox" ${player.available ? 'checked' : ''} 
+                     data-player-id="${player.id}" 
+                     class="availability-toggle">
+              <span class="checkmark"></span>
+            </label>
+            <button class="delete-btn" data-player-id="${player.id}" data-player-name="${escapeHtml(player.name)}" aria-label="Delete ${escapeHtml(player.name)}">×</button>
+          </div>
         </div>
-        <label class="availability-checkbox">
-          <input type="checkbox" ${player.available ? 'checked' : ''} 
-                 data-player-id="${player.id}" 
-                 class="availability-toggle">
-          <span class="checkmark"></span>
-        </label>
-      </div>
-    `).join('');
+      `;
+    }).join('');
     
     // Attach event listeners to checkboxes
     document.querySelectorAll('.availability-toggle').forEach(checkbox => {
       checkbox.addEventListener('change', handleAvailabilityToggle);
     });
+    setupTextButtons();
+    setupPlayerDeleteButtons();
+    setupPlayerSwipeToDelete();
   } catch (error) {
     console.error('Error loading players:', error);
     document.getElementById('playersList').innerHTML = 
@@ -376,6 +396,240 @@ async function handleAvailabilityToggle(e) {
   }
 }
 
+// Delete player
+async function handleDeletePlayer(playerId, playerName) {
+  try {
+    const response = await fetch(`${API_BASE}/players/${playerId}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Failed to delete player');
+    }
+    showMessage('formMessage', `Removed ${playerName || 'player'}`);
+    loadPlayers();
+    loadMatches();
+  } catch (error) {
+    console.error('Error deleting player:', error);
+    showMessage('formMessage', error.message || 'Failed to delete player', true);
+  }
+}
+
+// Prompt for a phone number (if needed) and open the user's messaging app
+async function handleTextPlayer(button) {
+  const playerId = parseInt(button.dataset.playerId);
+  const playerName = button.dataset.playerName || 'player';
+  let storedPhone = button.dataset.playerPhone ? decodeURIComponent(button.dataset.playerPhone) : '';
+
+  if (Number.isNaN(playerId)) return;
+
+  if (!storedPhone) {
+    const userInput = window.prompt(`Enter ${playerName}'s phone number to text about substituting:`);
+    if (userInput === null) return; // User canceled
+
+    const trimmed = userInput.trim();
+    const phonePattern = /^[0-9+\-().\s]{7,20}$/;
+
+    if (!trimmed || !phonePattern.test(trimmed)) {
+      showMessage('formMessage', 'Please enter a valid phone number (7-20 digits).', true);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/players/${playerId}/phone`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: trimmed })
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || 'Failed to save phone number');
+      }
+
+      const updatedPlayer = await response.json();
+      storedPhone = updatedPlayer.phone;
+      button.dataset.playerPhone = encodeURIComponent(updatedPlayer.phone || '');
+      showMessage('formMessage', `Saved phone for ${playerName}.`);
+      loadPlayers(); // Refresh to show phone icon
+    } catch (error) {
+      console.error('Error saving phone:', error);
+      showMessage('formMessage', error.message || 'Failed to save phone number', true);
+      return;
+    }
+  }
+
+  if (!storedPhone) return;
+
+  // Use stored session day/time
+  const { day, time } = getSessionInfo();
+  if (!day || !time) {
+    showMessage('formMessage', 'Set session day/time in the header before texting.', true);
+    return;
+  }
+
+  const messageTemplate = getSavedSubTemplate();
+  const messageBody = buildSubMessage(messageTemplate, {
+    name: playerName,
+    day,
+    time
+  });
+
+  openSmsIntent(storedPhone, messageBody);
+}
+
+function setupTextButtons() {
+  document.querySelectorAll('.text-btn').forEach(button => {
+    button.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleTextPlayer(button);
+    });
+  });
+}
+
+// Open the default SMS/messaging app with a prefilled message
+function openSmsIntent(phone, messageBody) {
+  const cleanedPhone = phone.replace(/[^\d+]/g, '');
+  if (!cleanedPhone) return;
+
+  const smsLink = `sms:${cleanedPhone}?&body=${encodeURIComponent(messageBody || '')}`;
+
+  const link = document.createElement('a');
+  link.href = smsLink;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// Template editor helpers
+function getSavedSubTemplate() {
+  const saved = localStorage.getItem('subTemplate');
+  return saved && saved.trim() ? saved : DEFAULT_SUB_TEMPLATE;
+}
+
+function saveSubTemplate(value) {
+  const toSave = value && value.trim() ? value : DEFAULT_SUB_TEMPLATE;
+  localStorage.setItem('subTemplate', toSave);
+}
+
+function buildSubMessage(template, data) {
+  return (template || DEFAULT_SUB_TEMPLATE)
+    .replace(/\{name\}/gi, data.name || '')
+    .replace(/\{day\}/gi, data.day || '')
+    .replace(/\{time\}/gi, data.time || '');
+}
+
+function setupTemplateEditor() {
+  const input = document.getElementById('subTemplateInput');
+  if (!input) return;
+
+  input.value = getSavedSubTemplate();
+  input.addEventListener('input', () => {
+    saveSubTemplate(input.value);
+  });
+}
+
+// Session day/time helpers
+function getSessionInfo() {
+  return {
+    day: (localStorage.getItem(SESSION_DAY_KEY) || '').trim(),
+    time: (localStorage.getItem(SESSION_TIME_KEY) || '').trim()
+  };
+}
+
+function saveSessionInfo(day, time) {
+  localStorage.setItem(SESSION_DAY_KEY, day || '');
+  localStorage.setItem(SESSION_TIME_KEY, time || '');
+  updateSessionTitle();
+}
+
+function updateSessionTitle() {
+  const titleEl = document.getElementById('sessionTitleText');
+  if (!titleEl) return;
+  const { day, time } = getSessionInfo();
+  if (day && time) {
+    titleEl.textContent = `Session: ${day} at ${time}`;
+  } else {
+    titleEl.textContent = 'Set session day/time';
+  }
+}
+
+function setupSessionControls() {
+  const dayInput = document.getElementById('sessionDayInput');
+  const timeInput = document.getElementById('sessionTimeInput');
+  const saveBtn = document.getElementById('sessionSaveBtn');
+  const editBtn = document.getElementById('sessionEditBtn');
+  const inputs = document.getElementById('sessionInputs');
+  if (!dayInput || !timeInput || !saveBtn || !editBtn || !inputs) return;
+
+  const { day, time } = getSessionInfo();
+  dayInput.value = day;
+  timeInput.value = time;
+  updateSessionTitle();
+
+  const setEditing = (isEditing) => {
+    inputs.classList.toggle('hidden', !isEditing);
+    saveBtn.classList.toggle('hidden', !isEditing);
+    editBtn.classList.toggle('active', isEditing);
+    if (isEditing) {
+      dayInput.focus();
+    }
+  };
+
+  const persist = () => {
+    const newDay = dayInput.value.trim();
+    const newTime = timeInput.value.trim();
+    saveSessionInfo(newDay, newTime);
+    setEditing(false);
+  };
+
+  // Initial state: hide inputs if day/time already set
+  setEditing(!(day && time));
+
+  saveBtn.addEventListener('click', persist);
+  editBtn.addEventListener('click', () => setEditing(true));
+}
+
+function setupPlayerDeleteButtons() {
+  document.querySelectorAll('.delete-btn').forEach(button => {
+    button.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const playerId = parseInt(button.dataset.playerId);
+      const playerName = button.dataset.playerName;
+      if (Number.isNaN(playerId)) return;
+      if (window.confirm(`Delete ${playerName || 'this player'}?`)) {
+        handleDeletePlayer(playerId, playerName);
+      }
+    });
+  });
+}
+
+function setupPlayerSwipeToDelete() {
+  const threshold = 60;
+  const verticalLimit = 40;
+  document.querySelectorAll('.player-item').forEach(item => {
+    let startX = 0;
+    let startY = 0;
+    item.style.touchAction = 'pan-y';
+
+    item.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+    }, { passive: true });
+
+    item.addEventListener('touchend', (e) => {
+      const touch = e.changedTouches[0];
+      const deltaX = touch.clientX - startX;
+      const deltaY = touch.clientY - startY;
+      if (Math.abs(deltaY) > verticalLimit) return;
+      if (deltaX < -threshold) {
+        const deleteBtn = item.querySelector('.delete-btn');
+        if (deleteBtn) deleteBtn.click();
+      }
+    }, { passive: true });
+  });
+}
+
 // Handle match creation button
 document.getElementById('createMatches').addEventListener('click', () => {
   createMatches();
@@ -393,6 +647,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setupAddPlayer();
   loadPlayers();
   loadMatches();
+  setupTemplateEditor();
+  setupSessionControls();
   
   // Setup accordion for Players section
   const playersAccordionHeader = document.getElementById('playersAccordionHeader');

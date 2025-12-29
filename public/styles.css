@@ -12,6 +12,11 @@ body {
     color: #333;
 }
 
+p {
+    display: flex;
+    flex-wrap: wrap;
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
@@ -32,6 +37,87 @@ header h1 {
 header p {
     font-size: 0.9em;
     opacity: 0.9;
+}
+
+.session-settings {
+    margin-top: 10px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 10px;
+    padding: 12px;
+    color: #f8f9ff;
+    text-align: left;
+}
+
+.session-title {
+    font-weight: 700;
+    margin-bottom: 8px;
+    font-size: 1em;
+}
+
+.session-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+.session-inputs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.session-inputs input {
+    flex: 1;
+    min-width: 180px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #d0d7ff;
+    font-size: 0.95em;
+}
+
+.session-inputs input:focus {
+    outline: none;
+    border-color: #cdd4ff;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.btn-small {
+    padding: 8px 12px;
+    font-size: 0.9em;
+}
+
+.session-hint {
+    font-size: 0.85em;
+    opacity: 0.85;
+}
+
+.session-edit-btn {
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    color: #f8f9ff;
+    font-size: 0.95em;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.session-edit-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.session-edit-btn:active,
+.session-edit-btn.active {
+    transform: scale(0.97);
+    background: rgba(255, 255, 255, 0.35);
+}
+
+.hidden {
+    display: none !important;
 }
 
 main {
@@ -306,6 +392,45 @@ main {
     overflow: visible;
 }
 
+.template-section {
+    margin-bottom: 12px;
+    padding: 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    background: #f8f9ff;
+}
+
+.template-header {
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: #3b5bdb;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.template-input {
+    width: 100%;
+    border: 2px solid #d0d7ff;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.95em;
+    resize: vertical;
+    min-height: 64px;
+}
+
+.template-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.template-help {
+    margin-top: 6px;
+    font-size: 0.85em;
+    color: #4f5d75;
+}
+
 .player-item {
     display: flex;
     justify-content: space-between;
@@ -316,15 +441,88 @@ main {
     border-radius: 6px;
     border-left: 3px solid #667eea;
     gap: 10px;
+    position: relative;
+    touch-action: pan-y;
 }
 
 .player-item.unavailable {
     opacity: 0.6;
 }
 
+.player-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.delete-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
+    background: #f8d7da;
+    color: #c0392b;
+    font-size: 1.1em;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.15s, background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.delete-btn:hover {
+    background: #f5c6cb;
+    transform: scale(1.05);
+}
+
+.delete-btn:active {
+    transform: scale(0.95);
+}
+
 .player-info {
     display: flex;
     flex-direction: column;
+}
+
+.player-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.phone-indicator {
+    font-size: 0.95em;
+    color: #2e7d32;
+    background: #e8f5e9;
+    border-radius: 12px;
+    padding: 2px 8px;
+    line-height: 1.2;
+}
+
+.text-btn {
+    background: #e8f0fe;
+    color: #3b5bdb;
+    border: 1px solid #d0d7ff;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.85em;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.text-btn:hover {
+    background: #d9e4ff;
+}
+
+.text-btn:active {
+    transform: scale(0.97);
 }
 
 .player-info strong {

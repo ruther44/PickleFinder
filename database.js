@@ -43,15 +43,21 @@ async function initializeTables() {
       await createTables();
     } else {
       // Check if old schema (has email column)
-      const hasEmail = playersCheck.rows.some(col => col.column_name === 'email');
+      const columnNames = playersCheck.rows.map(col => col.column_name);
+      const hasEmail = columnNames.includes('email');
       if (hasEmail) {
         await migrateTables();
       } else {
         // Check if availability column exists
-        const hasAvailable = playersCheck.rows.some(col => col.column_name === 'available');
-        if (!hasAvailable) {
+        if (!columnNames.includes('available')) {
           await pool.query('ALTER TABLE players ADD COLUMN available INTEGER DEFAULT 1');
         }
+
+        // Ensure phone column exists for sub texting
+        if (!columnNames.includes('phone')) {
+          await pool.query('ALTER TABLE players ADD COLUMN phone VARCHAR(32)');
+        }
+
         await checkMatchesTable();
       }
     }
@@ -97,6 +103,7 @@ async function createTables() {
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         available INTEGER DEFAULT 1,
+        phone VARCHAR(32),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -207,6 +214,20 @@ async function togglePlayerAvailability(playerId, available) {
   }
 }
 
+// Update or set a player's phone number
+async function updatePlayerPhone(playerId, phone) {
+  try {
+    const result = await pool.query(
+      'UPDATE players SET phone = $1 WHERE id = $2 RETURNING *',
+      [phone, playerId]
+    );
+    return result.rows[0];
+  } catch (err) {
+    console.error('Error updating player phone:', err);
+    throw err;
+  }
+}
+
 // Get the next match group number for a specific court count
 async function getNextMatchGroup(numCourts) {
   try {
@@ -268,6 +289,21 @@ async function getAllMatches() {
   }
 }
 
+// Delete player and any matches referencing them to satisfy FK constraints
+async function deletePlayer(playerId) {
+  try {
+    await pool.query(
+      'DELETE FROM matches WHERE player1_id = $1 OR player2_id = $1 OR player3_id = $1 OR player4_id = $1',
+      [playerId]
+    );
+    const result = await pool.query('DELETE FROM players WHERE id = $1 RETURNING *', [playerId]);
+    return result.rows[0];
+  } catch (err) {
+    console.error('Error deleting player:', err);
+    throw err;
+  }
+}
+
 module.exports = {
   initializeDatabase,
   initializeTables,
@@ -275,7 +311,9 @@ module.exports = {
   getAllPlayers,
   getAvailablePlayers,
   togglePlayerAvailability,
+  updatePlayerPhone,
   getNextMatchGroup,
   createMatch,
-  getAllMatches
+  getAllMatches,
+  deletePlayer
 };

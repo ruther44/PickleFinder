@@ -53,6 +53,21 @@ app.get('/api/players', async (req, res) => {
   }
 });
 
+// Delete a player (and any matches they are in)
+app.delete('/api/players/:id', async (req, res) => {
+  try {
+    const playerId = parseInt(req.params.id);
+    const deleted = await db.deletePlayer(playerId);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting player:', error);
+    res.status(500).json({ error: 'Failed to delete player' });
+  }
+});
+
 // Toggle player availability
 app.patch('/api/players/:id/availability', async (req, res) => {
   try {
@@ -68,6 +83,35 @@ app.patch('/api/players/:id/availability', async (req, res) => {
   } catch (error) {
     console.error('Error updating player availability:', error);
     res.status(500).json({ error: 'Failed to update player availability' });
+  }
+});
+
+// Update or set a player's phone number
+app.patch('/api/players/:id/phone', async (req, res) => {
+  try {
+    const playerId = parseInt(req.params.id);
+    const { phone } = req.body;
+
+    if (!phone || typeof phone !== 'string') {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    const trimmedPhone = phone.trim();
+    const phonePattern = /^[0-9+\-().\s]{7,20}$/;
+
+    if (!trimmedPhone || !phonePattern.test(trimmedPhone)) {
+      return res.status(400).json({ error: 'Phone number is invalid' });
+    }
+
+    const player = await db.updatePlayerPhone(playerId, trimmedPhone);
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+
+    res.json(player);
+  } catch (error) {
+    console.error('Error updating player phone:', error);
+    res.status(500).json({ error: 'Failed to update player phone' });
   }
 });
 

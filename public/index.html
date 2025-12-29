@@ -3,14 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pickleball Player Matcher</title>
+    <title>Pickle Barrel</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏓 Pickleball Game Matcher</h1>
+            <h1>🏓 Pickle Barrel</h1>
             <p>Match players for random pickleball games</p>
+            <div class="session-settings">
+                <div class="session-title-row">
+                    <div class="session-title" id="sessionTitleText">Set session day/time</div>
+                    <button id="sessionEditBtn" class="session-edit-btn" type="button" aria-label="Edit session day/time">✏️</button>
+                </div>
+                <div class="session-inputs" id="sessionInputs">
+                    <input type="text" id="sessionDayInput" placeholder="Day (e.g., Tuesday)">
+                    <input type="text" id="sessionTimeInput" placeholder="Time (e.g., 6:30 PM)">
+                    <button id="sessionSaveBtn" class="btn btn-secondary btn-small" type="button">Save</button>
+                </div>
+                <div class="session-hint">Used in the session title and all sub requests.</div>
+            </div>
         </header>
 
         <main>
@@ -33,6 +45,15 @@
                     <div id="formMessage" class="message"></div>
                     <div id="playersList" class="players-list">
                         <p class="loading">Loading players...</p>
+                    </div>
+                    <div class="template-section">
+                        <div class="template-header">
+                            Sub text template
+                        </div>
+                        <textarea id="subTemplateInput" class="template-input" rows="3" placeholder="Hi {name}, can you sub on {day} at {time}?"></textarea>
+                        <div class="template-help">
+                            Use {name}, {day}, {time}. Saved on this device only.
+                        </div>
                     </div>
                 </div>
             </section>
